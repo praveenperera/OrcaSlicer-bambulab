@@ -121,9 +121,13 @@ echo
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_BUILD_DIR="$PROJECT_DIR/build/$ARCH"
 DEPS_DIR="$PROJECT_DIR/deps"
-HOST_RUNTIME_DIR="$PROJECT_DIR/tools/pjarczak_bambu_linux_host/runtime/linux-x86_64"
-HOST_WRAPPER="$PROJECT_DIR/tools/pjarczak_bambu_linux_host/pjarczak-bambu-linux-host-wrapper"
+HOST_RUNTIME_DIR="${PJARCZAK_BAMBU_HOST_RUNTIME_DIR:-$PROJECT_DIR/tools/pjarczak_bambu_linux_host/runtime/linux-x86_64}"
+HOST_WRAPPER="${PJARCZAK_BAMBU_HOST_WRAPPER:-$PROJECT_DIR/tools/pjarczak_bambu_linux_host/pjarczak-bambu-linux-host-wrapper}"
 MAC_RUNTIME_HELPERS_DIR="$PROJECT_DIR/tools/pjarczak_bambu_runtime/macos"
+
+if [ ! -f "$HOST_WRAPPER" ] && [ -f "$HOST_RUNTIME_DIR/pjarczak-bambu-linux-host-wrapper" ]; then
+    HOST_WRAPPER="$HOST_RUNTIME_DIR/pjarczak-bambu-linux-host-wrapper"
+fi
 
 export BUILD_DIR_CONFIG_SUBDIR="/$BUILD_CONFIG"
 
@@ -135,8 +139,8 @@ copy_linux_bridge_runtime_to_app() {
 
     if [ ! -f "$HOST_RUNTIME_DIR/pjarczak_bambu_linux_host" ]; then
         echo "Missing linux host runtime: $HOST_RUNTIME_DIR/pjarczak_bambu_linux_host"
-        echo "Build it first on Linux with:"
-        echo "  tools/pjarczak_bambu_linux_host/package_linux_host_runtime.sh"
+        echo "Build and stage the clean-room bridge runtime first with:"
+        echo "  python3 tools/bambu_network_contract_tests/assemble_macos_bridge_runtime.py --source-runtime-dir --replace-existing"
         exit 1
     fi
 
@@ -147,6 +151,27 @@ copy_linux_bridge_runtime_to_app() {
 
     if [ ! -f "$HOST_RUNTIME_DIR/pjarczak_bambu_linux_host_abi0" ]; then
         echo "Missing linux host ABI0 runtime: $HOST_RUNTIME_DIR/pjarczak_bambu_linux_host_abi0"
+        exit 1
+    fi
+
+    if [ ! -f "$HOST_RUNTIME_DIR/libbambu_networking.so" ]; then
+        echo "Missing clean-room networking payload: $HOST_RUNTIME_DIR/libbambu_networking.so"
+        echo "Stage it with:"
+        echo "  python3 tools/bambu_network_contract_tests/assemble_macos_bridge_runtime.py --source-runtime-dir --replace-existing"
+        exit 1
+    fi
+
+    if [ ! -f "$HOST_RUNTIME_DIR/libBambuSource.so" ]; then
+        echo "Missing clean-room source payload: $HOST_RUNTIME_DIR/libBambuSource.so"
+        echo "Stage it with:"
+        echo "  python3 tools/bambu_network_contract_tests/assemble_macos_bridge_runtime.py --source-runtime-dir --replace-existing"
+        exit 1
+    fi
+
+    if [ ! -f "$HOST_RUNTIME_DIR/linux_payload_manifest.json" ]; then
+        echo "Missing clean-room payload manifest: $HOST_RUNTIME_DIR/linux_payload_manifest.json"
+        echo "Stage it with:"
+        echo "  python3 tools/bambu_network_contract_tests/assemble_macos_bridge_runtime.py --source-runtime-dir --replace-existing"
         exit 1
     fi
 
@@ -190,6 +215,21 @@ copy_linux_bridge_runtime_to_app() {
     chmod +x "$macos_dir/install_runtime_macos.sh"
     chmod +x "$macos_dir/verify_runtime_macos.sh"
 }
+
+if [ "${PJARCZAK_BAMBU_COPY_RUNTIME_ONLY:-}" = "1" ]; then
+    if [ -z "${PJARCZAK_BAMBU_COPY_APP_PATH:-}" ]; then
+        echo "Missing PJARCZAK_BAMBU_COPY_APP_PATH"
+        exit 1
+    fi
+
+    if [ -z "${PJARCZAK_BAMBU_COPY_INSTALL_ROOT:-}" ]; then
+        echo "Missing PJARCZAK_BAMBU_COPY_INSTALL_ROOT"
+        exit 1
+    fi
+
+    copy_linux_bridge_runtime_to_app "$PJARCZAK_BAMBU_COPY_APP_PATH" "$PJARCZAK_BAMBU_COPY_INSTALL_ROOT"
+    exit 0
+fi
 
 build_deps() {
     for _ARCH in x86_64 arm64; do

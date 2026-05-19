@@ -63,7 +63,13 @@ int main(int argc, char** argv)
         return 100;
     std::fflush(stdout);
     ::dup2(STDERR_FILENO, STDOUT_FILENO);
-    std::ofstream rpc_out(std::string("/proc/self/fd/") + std::to_string(rpc_fd), std::ios::binary | std::ios::out);
+    const std::string fd_root =
+#if defined(__APPLE__)
+        "/dev/fd/";
+#else
+        "/proc/self/fd/";
+#endif
+    std::ofstream rpc_out(fd_root + std::to_string(rpc_fd), std::ios::binary | std::ios::out);
     if (!rpc_out.good())
         return 101;
 

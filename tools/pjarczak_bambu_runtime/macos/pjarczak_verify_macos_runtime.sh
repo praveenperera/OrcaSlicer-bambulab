@@ -5,6 +5,8 @@ PACKAGE_DIR=""
 PLUGIN_DIR=""
 PLUGIN_CACHE_DIR=""
 ALLOW_MISSING_LINUX_PLUGIN=0
+RUN_LINUX_BRIDGE_PROBE=0
+LINUX_BRIDGE_REPORT=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -23,6 +25,14 @@ while [[ $# -gt 0 ]]; do
         -AllowMissingLinuxPlugin)
             ALLOW_MISSING_LINUX_PLUGIN=1
             shift
+            ;;
+        -RunLinuxBridgeProbe)
+            RUN_LINUX_BRIDGE_PROBE=1
+            shift
+            ;;
+        -LinuxBridgeReport)
+            LINUX_BRIDGE_REPORT="${2:-}"
+            shift 2
             ;;
         *)
             echo "unknown argument: $1" >&2
@@ -105,6 +115,8 @@ require_file "$PLUGIN_DIR/install_runtime_macos.sh" "install_runtime_macos.sh"
 require_file "$PLUGIN_DIR/verify_runtime_macos.sh" "verify_runtime_macos.sh"
 require_file "$PLUGIN_DIR/pjarczak_lima_instance.txt" "pjarczak_lima_instance.txt"
 require_file "$PLUGIN_DIR/pjarczak-bambu-linux-host-wrapper" "pjarczak-bambu-linux-host-wrapper"
+require_file "$PLUGIN_DIR/verify_linux_bridge_runtime.py" "verify_linux_bridge_runtime.py"
+require_file "$PLUGIN_DIR/bridge_rpc_probe.py" "bridge_rpc_probe.py"
 
 if [[ "$ALLOW_MISSING_LINUX_PLUGIN" -eq 0 ]]; then
     require_file "$PLUGIN_DIR/libbambu_networking.so" "libbambu_networking.so"
@@ -121,6 +133,9 @@ require_file "$RUNTIME_DIR/libBambuSource.so" "runtime/libBambuSource.so"
 require_file "$RUNTIME_DIR/pjarczak_bambu_linux_host" "runtime/pjarczak_bambu_linux_host"
 require_file "$RUNTIME_DIR/pjarczak_bambu_linux_host_abi1" "runtime/pjarczak_bambu_linux_host_abi1"
 require_file "$RUNTIME_DIR/pjarczak_bambu_linux_host_abi0" "runtime/pjarczak_bambu_linux_host_abi0"
+require_file "$RUNTIME_DIR/verify_linux_bridge_runtime.py" "runtime/verify_linux_bridge_runtime.py"
+require_file "$RUNTIME_DIR/bridge_rpc_probe.py" "runtime/bridge_rpc_probe.py"
+require_file "$RUNTIME_DIR/linux_payload_manifest.json" "runtime/linux_payload_manifest.json"
 require_file "$RUNTIME_DIR/ca-certificates.crt" "runtime/ca-certificates.crt"
 require_file "$RUNTIME_DIR/slicer_base64.cer" "runtime/slicer_base64.cer"
 
@@ -129,6 +144,9 @@ compare_required_file "$PLUGIN_DIR/libBambuSource.so" "$RUNTIME_DIR/libBambuSour
 compare_required_file "$PLUGIN_DIR/pjarczak_bambu_linux_host" "$RUNTIME_DIR/pjarczak_bambu_linux_host" "pjarczak_bambu_linux_host"
 compare_required_file "$PLUGIN_DIR/pjarczak_bambu_linux_host_abi1" "$RUNTIME_DIR/pjarczak_bambu_linux_host_abi1" "pjarczak_bambu_linux_host_abi1"
 compare_required_file "$PLUGIN_DIR/pjarczak_bambu_linux_host_abi0" "$RUNTIME_DIR/pjarczak_bambu_linux_host_abi0" "pjarczak_bambu_linux_host_abi0"
+compare_required_file "$PLUGIN_DIR/verify_linux_bridge_runtime.py" "$RUNTIME_DIR/verify_linux_bridge_runtime.py" "verify_linux_bridge_runtime.py"
+compare_required_file "$PLUGIN_DIR/bridge_rpc_probe.py" "$RUNTIME_DIR/bridge_rpc_probe.py" "bridge_rpc_probe.py"
+compare_required_file "$PLUGIN_DIR/linux_payload_manifest.json" "$RUNTIME_DIR/linux_payload_manifest.json" "linux_payload_manifest.json"
 compare_required_file "$PLUGIN_DIR/ca-certificates.crt" "$RUNTIME_DIR/ca-certificates.crt" "ca-certificates.crt"
 compare_required_file "$PLUGIN_DIR/slicer_base64.cer" "$RUNTIME_DIR/slicer_base64.cer" "slicer_base64.cer"
 
@@ -156,6 +174,19 @@ fi
 if ! "$LIMACTL" shell "$INSTANCE" -- /usr/bin/env true >/dev/null 2>&1; then
     echo "Lima instance '$INSTANCE' is not ready" >&2
     exit 1
+fi
+
+if [[ "$RUN_LINUX_BRIDGE_PROBE" -eq 1 ]]; then
+    if [[ -z "$LINUX_BRIDGE_REPORT" ]]; then
+        LINUX_BRIDGE_REPORT="$RUNTIME_DIR/linux_bridge_runtime_verify_report.json"
+    fi
+    "$LIMACTL" shell "$INSTANCE" -- /usr/bin/env \
+        PJARCZAK_BAMBU_PLUGIN_DIR="$RUNTIME_DIR" \
+        PJARCZAK_BAMBU_NETWORK_SO="$RUNTIME_DIR/libbambu_networking.so" \
+        PJARCZAK_BAMBU_SOURCE_SO="$RUNTIME_DIR/libBambuSource.so" \
+        python3 "$RUNTIME_DIR/verify_linux_bridge_runtime.py" \
+            --runtime-dir "$RUNTIME_DIR" \
+            --out "$LINUX_BRIDGE_REPORT"
 fi
 
 printf 'runtime ok

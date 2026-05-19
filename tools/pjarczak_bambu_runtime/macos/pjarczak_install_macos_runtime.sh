@@ -169,6 +169,10 @@ ensure_lima_installed() {
     [[ -n "$LIMACTL" ]]
 }
 
+instance_exists() {
+    "$LIMACTL" list "$INSTANCE" >/dev/null 2>&1
+}
+
 maybe_install_rosetta() {
     if [[ "$(uname -m)" != "arm64" ]]; then
         return 0
@@ -177,6 +181,41 @@ maybe_install_rosetta() {
         return 0
     fi
     /usr/sbin/softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true
+}
+
+ensure_guest_amd64_runtime() {
+    "$LIMACTL" shell "$INSTANCE" -- /bin/sh -s <<'EOF'
+set -eu
+
+if [ "$(uname -m)" != "aarch64" ]; then
+    exit 0
+fi
+if [ -e /lib64/ld-linux-x86-64.so.2 ]; then
+    exit 0
+fi
+
+sudo dpkg --add-architecture amd64
+if ! grep -q '^Architectures:' /etc/apt/sources.list.d/ubuntu.sources; then
+    sudo sed -i '/^Signed-By:/a Architectures: arm64' /etc/apt/sources.list.d/ubuntu.sources
+fi
+sudo tee /etc/apt/sources.list.d/ubuntu-amd64.sources >/dev/null <<'SOURCES'
+Types: deb
+URIs: http://archive.ubuntu.com/ubuntu
+Suites: questing questing-updates questing-backports
+Components: main universe restricted multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+Architectures: amd64
+
+Types: deb
+URIs: http://security.ubuntu.com/ubuntu
+Suites: questing-security
+Components: main universe restricted multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+Architectures: amd64
+SOURCES
+sudo apt-get update
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libc6:amd64 libgcc-s1:amd64 libstdc++6:amd64
+EOF
 }
 
 copy_runtime_payload() {
@@ -189,6 +228,9 @@ copy_runtime_payload() {
         pjarczak_bambu_linux_host
         pjarczak_bambu_linux_host_abi1
         pjarczak_bambu_linux_host_abi0
+        bridge_rpc_probe.py
+        verify_linux_bridge_runtime.py
+        linux_payload_manifest.json
         ca-certificates.crt
         slicer_base64.cer
     )
@@ -207,7 +249,12 @@ copy_runtime_payload() {
         fi
     done
 
-    chmod 755 "$dst_dir/pjarczak_bambu_linux_host" "$dst_dir/pjarczak_bambu_linux_host_abi1" "$dst_dir/pjarczak_bambu_linux_host_abi0"
+    chmod 755 \
+        "$dst_dir/pjarczak_bambu_linux_host" \
+        "$dst_dir/pjarczak_bambu_linux_host_abi1" \
+        "$dst_dir/pjarczak_bambu_linux_host_abi0" \
+        "$dst_dir/bridge_rpc_probe.py" \
+        "$dst_dir/verify_linux_bridge_runtime.py"
 }
 
 INSTANCE="${PJARCZAK_MAC_LIMA_INSTANCE:-}"
@@ -236,10 +283,15 @@ if [[ "$REPLACE_EXISTING" -eq 1 ]]; then
 fi
 
 if ! "$LIMACTL" shell "$INSTANCE" -- /usr/bin/env true >/dev/null 2>&1; then
-    "$LIMACTL" "${START_ARGS[@]}" template:default
+    if instance_exists; then
+        "$LIMACTL" start "$INSTANCE"
+    else
+        "$LIMACTL" "${START_ARGS[@]}" template:default
+    fi
 fi
 
 "$LIMACTL" start-at-login "$INSTANCE" --enabled >/dev/null 2>&1 || true
 "$LIMACTL" shell "$INSTANCE" -- /usr/bin/env true >/dev/null
+ensure_guest_amd64_runtime
 printf 'runtime installed
 '

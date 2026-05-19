@@ -59,10 +59,16 @@ using fn_ft_free = void (*)(void *);
 using fn_ft_job_result_destroy = void (*)(ft_job_result *);
 using fn_ft_job_msg_destroy = void (*)(ft_job_msg *);
 using fn_ft_tunnel_create = ft_err (*)(const char *url, FT_TunnelHandle **out);
+using fn_ft_tunnel_retain = void (*)(FT_TunnelHandle *);
 using fn_ft_tunnel_release = void (*)(FT_TunnelHandle *);
+using fn_ft_tunnel_start_connect =
+    ft_err (*)(FT_TunnelHandle *, void (*)(void *user, int level, int status, const char *message), void *user);
+using fn_ft_tunnel_set_status_cb =
+    ft_err (*)(FT_TunnelHandle *, void (*)(void *user, int level, int status, int progress, const char *message), void *user);
 using fn_ft_tunnel_sync_connect = ft_err (*)(FT_TunnelHandle *);
 using fn_ft_tunnel_shutdown = ft_err (*)(FT_TunnelHandle *);
 using fn_ft_job_create = ft_err (*)(const char *params_json, FT_JobHandle **out);
+using fn_ft_job_retain = void (*)(FT_JobHandle *);
 using fn_ft_job_release = void (*)(FT_JobHandle *);
 using fn_ft_job_set_result_cb = ft_err (*)(FT_JobHandle *, void (*)(void *user, ft_job_result result), void *user);
 using fn_ft_job_get_result = ft_err (*)(FT_JobHandle *, uint32_t timeout_ms, ft_job_result *out_result);
@@ -606,6 +612,52 @@ nlohmann::json LinuxPluginHost::auth_capabilities() const
     };
 }
 
+nlohmann::json LinuxPluginHost::auth_info(void* agent)
+{
+    auto is_login = net<bool (*)(void*)>("bambu_network_is_user_login");
+    if (!agent || !is_login)
+        return not_supported("net.auth_info");
+
+    nlohmann::json out{
+        {"ok", true},
+        {"capabilities", auth_capabilities()},
+        {"logged_in", is_login(agent)}
+    };
+
+    auto get_bambulab_host = net<std::string (*)(void*)>("bambu_network_get_bambulab_host");
+    if (get_bambulab_host)
+        out["bambulab_host"] = get_bambulab_host(agent);
+
+    auto get_studio_info_url = net<std::string (*)(void*)>("bambu_network_get_studio_info_url");
+    if (get_studio_info_url)
+        out["studio_info_url"] = get_studio_info_url(agent);
+
+    auto get_user_selected_machine = net<std::string (*)(void*)>("bambu_network_get_user_selected_machine");
+    if (get_user_selected_machine)
+        out["user_selected_machine"] = get_user_selected_machine(agent);
+
+    if (!out.value("logged_in", false))
+        return out;
+
+    auto get_user_id = net<std::string (*)(void*)>("bambu_network_get_user_id");
+    if (get_user_id)
+        out["user_id"] = get_user_id(agent);
+
+    auto get_user_name = net<std::string (*)(void*)>("bambu_network_get_user_name");
+    if (get_user_name)
+        out["user_name"] = get_user_name(agent);
+
+    auto get_user_avatar = net<std::string (*)(void*)>("bambu_network_get_user_avatar");
+    if (get_user_avatar)
+        out["user_avatar"] = get_user_avatar(agent);
+
+    auto get_user_nickname = net<std::string (*)(void*)>("bambu_network_get_user_nickanme");
+    if (get_user_nickname)
+        out["user_nickname"] = get_user_nickname(agent);
+
+    return out;
+}
+
 nlohmann::json LinuxPluginHost::not_supported(const std::string& method) const
 {
     return {
@@ -1018,6 +1070,7 @@ nlohmann::json LinuxPluginHost::handle(const std::string& method, const nlohmann
     if (method == "net.build_login_cmd") { auto f = net<std::string (*)(void*)>("bambu_network_build_login_cmd"); auto a = lookup_agent(); return f && a ? nlohmann::json{{"ok", true}, {"value", f(a)}} : not_supported(method); }
     if (method == "net.build_logout_cmd") { auto f = net<std::string (*)(void*)>("bambu_network_build_logout_cmd"); auto a = lookup_agent(); return f && a ? nlohmann::json{{"ok", true}, {"value", f(a)}} : not_supported(method); }
     if (method == "net.build_login_info") { auto f = net<std::string (*)(void*)>("bambu_network_build_login_info"); auto a = lookup_agent(); return f && a ? nlohmann::json{{"ok", true}, {"value", f(a)}} : not_supported(method); }
+    if (method == "net.auth_info") { auto a = lookup_agent(); return auth_info(a); }
     if (method == "net.ping_bind") { auto f = net<int (*)(void*, std::string)>("bambu_network_ping_bind"); auto a = lookup_agent(); return f && a ? nlohmann::json{{"ok", true}, {"value", f(a, payload.value("ping_code", std::string()))}} : not_supported(method); }
     if (method == "net.bind_detect") { auto f = net<int (*)(void*, std::string, std::string, detectResult&)>("bambu_network_bind_detect"); auto a = lookup_agent(); if (!f || !a) return not_supported(method); detectResult det; const int ret = f(a, payload.value("dev_ip", std::string()), payload.value("sec_link", std::string()), det); return {{"ok", true}, {"value", ret}, {"detect", {{"result_msg", det.result_msg}, {"command", det.command}, {"dev_id", det.dev_id}, {"model_id", det.model_id}, {"dev_name", det.dev_name}, {"version", det.version}, {"bind_state", det.bind_state}, {"connect_type", det.connect_type}}}}; }
     if (method == "net.report_consent") { auto f = net<int (*)(void*, std::string)>("bambu_network_report_consent"); auto a = lookup_agent(); return f && a ? nlohmann::json{{"ok", true}, {"value", f(a, payload.value("expand", std::string()))}} : not_supported(method); }
@@ -1206,11 +1259,18 @@ nlohmann::json LinuxPluginHost::handle(const std::string& method, const nlohmann
         return {
             {"ok", true},
             {"ft_abi_version", has_network_symbol("ft_abi_version")},
+            {"ft_free", has_network_symbol("ft_free")},
+            {"ft_job_result_destroy", has_network_symbol("ft_job_result_destroy")},
+            {"ft_job_msg_destroy", has_network_symbol("ft_job_msg_destroy")},
             {"ft_tunnel_create", has_network_symbol("ft_tunnel_create")},
+            {"ft_tunnel_retain", has_network_symbol("ft_tunnel_retain")},
+            {"ft_tunnel_start_connect", has_network_symbol("ft_tunnel_start_connect")},
+            {"ft_tunnel_set_status_cb", has_network_symbol("ft_tunnel_set_status_cb")},
             {"ft_tunnel_sync_connect", has_network_symbol("ft_tunnel_sync_connect")},
             {"ft_tunnel_release", has_network_symbol("ft_tunnel_release")},
             {"ft_tunnel_shutdown", has_network_symbol("ft_tunnel_shutdown")},
             {"ft_job_create", has_network_symbol("ft_job_create")},
+            {"ft_job_retain", has_network_symbol("ft_job_retain")},
             {"ft_job_release", has_network_symbol("ft_job_release")},
             {"ft_job_set_result_cb", has_network_symbol("ft_job_set_result_cb")},
             {"ft_job_get_result", has_network_symbol("ft_job_get_result")},

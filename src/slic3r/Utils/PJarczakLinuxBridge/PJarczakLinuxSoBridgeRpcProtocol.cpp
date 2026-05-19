@@ -96,7 +96,8 @@ bool write_json_frame(std::ostream& out, RpcFrameType type, int id, const nlohma
 bool read_json_frame(const RawRpcFrame& frame, nlohmann::json& payload, std::string& error)
 {
     try {
-        payload = nlohmann::json::parse(frame.payload.begin(), frame.payload.end());
+        const char* first = reinterpret_cast<const char*>(frame.payload.data());
+        payload = nlohmann::json::parse(first, first + frame.payload.size());
         return true;
     } catch (const std::exception& e) {
         error = e.what();

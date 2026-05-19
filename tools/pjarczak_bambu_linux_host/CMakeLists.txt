@@ -1,14 +1,22 @@
 cmake_minimum_required(VERSION 3.16)
-project(pjarczak_bambu_linux_host_standalone LANGUAGES C CXX)
+project(pjarczak_bambu_linux_host_standalone LANGUAGES CXX)
+
+if (POLICY CMP0167)
+    cmake_policy(SET CMP0167 OLD)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+option(PJARCZAK_LINUX_BRIDGE_STANDALONE_SHA256 "Use the standalone bridge host SHA-256 implementation" ON)
 
 get_filename_component(REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 
 find_package(Threads REQUIRED)
-find_package(OpenSSL REQUIRED)
+if (NOT PJARCZAK_LINUX_BRIDGE_STANDALONE_SHA256)
+    find_package(OpenSSL REQUIRED)
+endif()
+find_package(Boost 1.83.0 QUIET)
 find_package(nlohmann_json CONFIG QUIET)
 
 set(HOST_SOURCES
@@ -31,20 +39,28 @@ function(add_host_variant target_name abi_value)
         "${REPO_ROOT}/src"
         "${REPO_ROOT}/deps_src"
     )
+    if (Boost_FOUND)
+        target_include_directories(${target_name} PRIVATE ${Boost_INCLUDE_DIRS})
+    endif()
     target_compile_definitions(${target_name} PRIVATE
         PJARCZAK_LINUX_BRIDGE_STANDALONE_HOST=1
         PJARCZAK_LINUX_BRIDGE_LIGHTWEIGHT_TASKS=1
         _GLIBCXX_USE_CXX11_ABI=${abi_value}
     )
+    if (PJARCZAK_LINUX_BRIDGE_STANDALONE_SHA256)
+        target_compile_definitions(${target_name} PRIVATE PJARCZAK_LINUX_BRIDGE_STANDALONE_SHA256=1)
+    endif()
     if (TARGET nlohmann_json::nlohmann_json)
         target_link_libraries(${target_name} PRIVATE nlohmann_json::nlohmann_json)
     endif()
     target_link_libraries(${target_name} PRIVATE
         Threads::Threads
-        OpenSSL::Crypto
         ${CMAKE_DL_LIBS}
     )
-    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    if (NOT PJARCZAK_LINUX_BRIDGE_STANDALONE_SHA256)
+        target_link_libraries(${target_name} PRIVATE OpenSSL::Crypto)
+    endif()
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
         target_link_options(${target_name} PRIVATE -static-libstdc++ -static-libgcc)
     endif()
 endfunction()

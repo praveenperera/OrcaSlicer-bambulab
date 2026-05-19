@@ -65,6 +65,7 @@ private:
     void* resolve_source(const char* name);
     bool has_network_symbol(const char* name);
     nlohmann::json auth_capabilities() const;
+    nlohmann::json auth_info(void* agent);
     nlohmann::json not_supported(const std::string& method) const;
     void queue_event(std::int64_t agent_handle, const std::string& name, const nlohmann::json& payload);
     void queue_tunnel_event(std::int64_t tunnel_handle, const std::string& name, const nlohmann::json& payload);
