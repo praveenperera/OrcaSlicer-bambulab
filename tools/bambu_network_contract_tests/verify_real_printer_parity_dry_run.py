@@ -17,7 +17,13 @@ def write_file(path: pathlib.Path, content: bytes = b"fixture\n") -> pathlib.Pat
     return path
 
 
-def run_wrapper(work: pathlib.Path, *extra: str, password: str | None = "dry-run-only") -> subprocess.CompletedProcess:
+def run_wrapper(
+    work: pathlib.Path,
+    *extra: str,
+    password: str | None = "dry-run-only",
+    printer_dev_id: str | None = "DRYRUN123",
+    printer_dev_ip: str | None = "192.0.2.10",
+) -> subprocess.CompletedProcess:
     official_network = write_file(work / "official/libbambu_networking.dylib")
     official_source = write_file(work / "official/libBambuSource.dylib")
     candidate_network = write_file(work / "candidate/libbambu_networking.dylib")
@@ -31,32 +37,34 @@ def run_wrapper(work: pathlib.Path, *extra: str, password: str | None = "dry-run
     else:
         env["BAMBU_NETWORK_PRINTER_PASSWORD"] = password
 
+    cmd = [
+        sys.executable,
+        str(WRAPPER),
+        "--official-network",
+        str(official_network),
+        "--official-source",
+        str(official_source),
+        "--candidate-network",
+        str(candidate_network),
+        "--candidate-source",
+        str(candidate_source),
+        "--linux-runtime-report",
+        str(linux_report),
+        "--print-job-file",
+        str(print_job),
+        "--print-job-remote-name",
+        "OrcaCube_v2.3mf",
+        "--skip-build",
+        "--dry-run",
+        *extra,
+    ]
+    if printer_dev_id is not None:
+        cmd.extend(["--printer-dev-id", printer_dev_id])
+    if printer_dev_ip is not None:
+        cmd.extend(["--printer-dev-ip", printer_dev_ip])
+
     return subprocess.run(
-        [
-            sys.executable,
-            str(WRAPPER),
-            "--official-network",
-            str(official_network),
-            "--official-source",
-            str(official_source),
-            "--candidate-network",
-            str(candidate_network),
-            "--candidate-source",
-            str(candidate_source),
-            "--linux-runtime-report",
-            str(linux_report),
-            "--printer-dev-id",
-            "DRYRUN123",
-            "--printer-dev-ip",
-            "192.0.2.10",
-            "--print-job-file",
-            str(print_job),
-            "--print-job-remote-name",
-            "OrcaCube_v2.3mf",
-            "--skip-build",
-            "--dry-run",
-            *extra,
-        ],
+        cmd,
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -94,6 +102,76 @@ def main() -> int:
         commands = payload.get("commands", {})
         require(isinstance(commands.get("capture_official_parity"), list), "JSON dry run did not include capture argv")
         require(isinstance(commands.get("run_release_readiness"), list), "JSON dry run did not include readiness argv")
+        require(commands.get("run_macos_native_readiness") is None, "default JSON dry run unexpectedly included native readiness argv")
+
+        native_json_report = run_wrapper(
+            work / "native-json-report",
+            "--confirm-start-prints",
+            "--include-source-streaming",
+            "--include-source-control-tunnel",
+            "--macos-native-readiness",
+            "--authorized-cloud-dry-run-report",
+            str(write_file(work / "authorized_cloud_dry_run_missing_inputs.json", b'{"ok":true,"dry_run":true}\n')),
+            "--json",
+        )
+        require(native_json_report.returncode == 0, f"native JSON dry run failed: {native_json_report.stderr}\n{native_json_report.stdout}")
+        require(password_value not in native_json_report.stdout, "native JSON dry-run output leaked the printer password value")
+        native_payload = json.loads(native_json_report.stdout)
+        native_commands = native_payload.get("commands", {})
+        native_readiness = native_commands.get("run_macos_native_readiness")
+        require(isinstance(native_readiness, list), "native JSON dry run did not include native readiness argv")
+        require("run_macos_native_readiness.py" in " ".join(native_readiness), "native readiness argv did not run the native aggregator")
+        require("--official-parity-report" in native_readiness, "native readiness argv did not include baseline official parity report")
+        require("--real-printer-parity-report" in native_readiness, "native readiness argv did not include real-printer parity report")
+        require("--source-control-parity-report" in native_readiness, "native readiness argv did not include source-control parity report")
+        require("--authorized-cloud-dry-run-report" in native_readiness, "native readiness argv did not include cloud dry-run blocker report")
+        require("--native-package-macos-dir" in native_readiness, "native readiness argv did not include native package directory")
+        require("--native-gui-startup-log" in native_readiness, "native readiness argv did not include native GUI startup log")
+        require("--real-printer-test-3mf" in native_readiness, "native readiness argv did not include real-printer test 3MF")
+        cloud_dry_run = native_readiness[native_readiness.index("--authorized-cloud-dry-run-report") + 1]
+        require(cloud_dry_run.endswith("authorized_cloud_dry_run_missing_inputs.json"), "native readiness argv did not preserve cloud dry-run blocker report")
+        native_test_3mf = native_readiness[native_readiness.index("--real-printer-test-3mf") + 1]
+        require(native_test_3mf.endswith("OrcaCube_v2.3mf"), "native readiness argv did not preserve the print-job file")
+        native_capture = native_commands.get("capture_official_parity")
+        require(isinstance(native_capture, list), "native JSON dry run did not include capture argv")
+        require("--expect-source-stream-success" in native_capture, "native capture command did not require source-stream success")
+        require("--print-job-modes" in native_capture, "native capture command did not include print modes")
+        native_modes = native_capture[native_capture.index("--print-job-modes") + 1]
+        require(
+            native_modes == "upload-only,local-print,sdcard-print",
+            "native capture command did not require every print mode",
+        )
+        native_source_control = native_commands.get("capture_source_control_tunnel_parity")
+        require(isinstance(native_source_control, list), "native JSON dry run did not include source-control capture argv")
+
+        native_without_linux_runtime = run_wrapper(
+            work / "native-without-linux-runtime",
+            "--confirm-start-prints",
+            "--include-source-streaming",
+            "--include-source-control-tunnel",
+            "--macos-native-readiness",
+            "--json",
+            "--linux-runtime-report",
+            str(work / "missing-linux-runtime-report.json"),
+        )
+        require(
+            native_without_linux_runtime.returncode == 0,
+            f"native dry run required Linux runtime evidence: {native_without_linux_runtime.stderr}\n{native_without_linux_runtime.stdout}",
+        )
+
+        legacy_without_linux_runtime = run_wrapper(
+            work / "legacy-without-linux-runtime",
+            "--print-job-modes",
+            "upload-only",
+            "--json",
+            "--linux-runtime-report",
+            str(work / "missing-linux-runtime-report.json"),
+        )
+        require(legacy_without_linux_runtime.returncode != 0, "legacy dry run accepted missing Linux runtime evidence")
+        require(
+            "Linux runtime report does not exist" in legacy_without_linux_runtime.stderr,
+            "legacy missing Linux runtime error was not explicit",
+        )
 
         source_stream = run_wrapper(work / "source-stream", "--print-job-modes", "upload-only", "--include-source-streaming", "--json")
         require(source_stream.returncode == 0, f"source-stream dry run failed: {source_stream.stderr}\n{source_stream.stdout}")
@@ -140,9 +218,31 @@ def main() -> int:
         require(missing_confirm.returncode != 0, "dry run accepted print-start modes without confirmation")
         require("--confirm-start-prints is required" in missing_confirm.stderr, "missing confirmation error was not explicit")
 
-        missing_password = run_wrapper(work / "missing-password", "--print-job-modes", "upload-only", password=None)
-        require(missing_password.returncode != 0, "dry run accepted missing printer password environment")
-        require("BAMBU_NETWORK_PRINTER_PASSWORD must be set" in missing_password.stderr, "missing password error was not explicit")
+        missing_inputs = run_wrapper(
+            work / "missing-inputs",
+            "--print-job-modes",
+            "upload-only",
+            "--json",
+            password=None,
+            printer_dev_id=None,
+            printer_dev_ip=None,
+        )
+        require(missing_inputs.returncode == 0, f"missing-inputs dry run failed: {missing_inputs.stderr}\n{missing_inputs.stdout}")
+        missing_payload = json.loads(missing_inputs.stdout)
+        missing_printer = missing_payload.get("printer", {})
+        require(missing_printer.get("dev_id_present") is False, "missing-inputs dry run did not report missing dev id")
+        require(missing_printer.get("dev_ip_present") is False, "missing-inputs dry run did not report missing dev IP")
+        require(missing_printer.get("password_present") is False, "missing-inputs dry run did not report missing password env")
+
+        missing_password_human = run_wrapper(work / "missing-password-human", "--print-job-modes", "upload-only", password=None)
+        require(missing_password_human.returncode == 0, f"human dry run rejected missing password env: {missing_password_human.stderr}")
+
+        incomplete_native = run_wrapper(work / "incomplete-native", "--print-job-modes", "upload-only", "--macos-native-readiness")
+        require(incomplete_native.returncode != 0, "native dry run accepted incomplete real-printer scope")
+        require(
+            "--macos-native-readiness requires all print-job modes" in incomplete_native.stderr,
+            "incomplete native real-printer scope error was not explicit",
+        )
 
         invalid_mode = run_wrapper(work / "invalid-mode", "--print-job-modes", "upload-only,bad-mode")
         require(invalid_mode.returncode != 0, "dry run accepted an invalid print-job mode")

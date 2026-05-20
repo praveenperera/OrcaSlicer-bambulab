@@ -124,6 +124,7 @@ DEPS_DIR="$PROJECT_DIR/deps"
 HOST_RUNTIME_DIR="${PJARCZAK_BAMBU_HOST_RUNTIME_DIR:-$PROJECT_DIR/tools/pjarczak_bambu_linux_host/runtime/linux-x86_64}"
 HOST_WRAPPER="${PJARCZAK_BAMBU_HOST_WRAPPER:-$PROJECT_DIR/tools/pjarczak_bambu_linux_host/pjarczak-bambu-linux-host-wrapper}"
 MAC_RUNTIME_HELPERS_DIR="$PROJECT_DIR/tools/pjarczak_bambu_runtime/macos"
+NATIVE_PLUGIN_BUILD_DIR="${PJARCZAK_BAMBU_MACOS_NATIVE_PLUGIN_BUILD_DIR:-$PROJECT_DIR/build/bambu_network_rust_plugin_release}"
 
 if [ ! -f "$HOST_WRAPPER" ] && [ -f "$HOST_RUNTIME_DIR/pjarczak-bambu-linux-host-wrapper" ]; then
     HOST_WRAPPER="$HOST_RUNTIME_DIR/pjarczak-bambu-linux-host-wrapper"
@@ -216,10 +217,73 @@ copy_linux_bridge_runtime_to_app() {
     chmod +x "$macos_dir/verify_runtime_macos.sh"
 }
 
+copy_macos_native_plugin_to_app() {
+    local app_path="$1"
+    local macos_dir="$app_path/Contents/MacOS"
+    local package_root
+    local network_dylib="$NATIVE_PLUGIN_BUILD_DIR/libbambu_networking.dylib"
+    local source_dylib="$NATIVE_PLUGIN_BUILD_DIR/libBambuSource.dylib"
+    package_root="$(dirname "$app_path")"
+
+    if [ ! -d "$macos_dir" ]; then
+        echo "Missing app MacOS directory: $macos_dir"
+        exit 1
+    fi
+
+    remove_macos_bridge_runtime_from_package_root "$macos_dir"
+    remove_macos_bridge_runtime_from_package_root "$package_root"
+
+    if [ ! -f "$network_dylib" ]; then
+        echo "Missing native networking dylib: $network_dylib"
+        echo "Build it with:"
+        echo "  cmake -S tools/bambu_network_rust_plugin -B build/bambu_network_rust_plugin_release -DCMAKE_BUILD_TYPE=Release"
+        echo "  cmake --build build/bambu_network_rust_plugin_release --parallel"
+        exit 1
+    fi
+
+    if [ ! -f "$source_dylib" ]; then
+        echo "Missing native source dylib: $source_dylib"
+        echo "Build it with:"
+        echo "  cmake -S tools/bambu_network_rust_plugin -B build/bambu_network_rust_plugin_release -DCMAKE_BUILD_TYPE=Release"
+        echo "  cmake --build build/bambu_network_rust_plugin_release --parallel"
+        exit 1
+    fi
+
+    cp -f "$network_dylib" "$macos_dir/"
+    cp -f "$source_dylib" "$macos_dir/"
+}
+
+remove_macos_bridge_runtime_from_package_root() {
+    local package_root="$1"
+
+    if [ ! -d "$package_root" ]; then
+        return
+    fi
+
+    rm -f \
+        "$package_root/libpjarczak_bambu_networking_bridge.dylib" \
+        "$package_root/pjarczak_bambu_linux_host" \
+        "$package_root/pjarczak_bambu_linux_host_abi1" \
+        "$package_root/pjarczak_bambu_linux_host_abi0" \
+        "$package_root/pjarczak-bambu-linux-host-wrapper" \
+        "$package_root/libbambu_networking.so" \
+        "$package_root/libBambuSource.so" \
+        "$package_root/linux_payload_manifest.json" \
+        "$package_root/install_runtime_macos.sh" \
+        "$package_root/verify_runtime_macos.sh" \
+        "$package_root/pjarczak_lima_instance.txt"
+    find "$package_root" -type f \( -name 'libbambu_networking.so*' -o -name 'libBambuSource.so*' \) -delete
+}
+
 if [ "${PJARCZAK_BAMBU_COPY_RUNTIME_ONLY:-}" = "1" ]; then
     if [ -z "${PJARCZAK_BAMBU_COPY_APP_PATH:-}" ]; then
         echo "Missing PJARCZAK_BAMBU_COPY_APP_PATH"
         exit 1
+    fi
+
+    if [ "${PJARCZAK_BAMBU_MACOS_NATIVE_PLUGIN:-}" = "1" ]; then
+        copy_macos_native_plugin_to_app "$PJARCZAK_BAMBU_COPY_APP_PATH"
+        exit 0
     fi
 
     if [ -z "${PJARCZAK_BAMBU_COPY_INSTALL_ROOT:-}" ]; then
@@ -316,7 +380,11 @@ build_slicer() {
                     find ./OrcaSlicer_profile_validator.app/ -name '.DS_Store' -delete
                 fi
 
-                copy_linux_bridge_runtime_to_app "./OrcaSlicer.app" "$PROJECT_BUILD_DIR/OrcaSlicer"
+                if [ "${PJARCZAK_BAMBU_MACOS_NATIVE_PLUGIN:-}" = "1" ]; then
+                    copy_macos_native_plugin_to_app "./OrcaSlicer.app"
+                else
+                    copy_linux_bridge_runtime_to_app "./OrcaSlicer.app" "$PROJECT_BUILD_DIR/OrcaSlicer"
+                fi
             )
         fi
     done

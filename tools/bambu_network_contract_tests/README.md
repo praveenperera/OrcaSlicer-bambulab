@@ -254,6 +254,8 @@ Use the wrapper when authorized cloud credentials are available:
 
 ```sh
 BAMBU_CLOUD_LOGIN_INFO_JSON='<login-info-json>' \
+BAMBU_CLOUD_TICKET='<cloud-ticket>' \
+BAMBU_CLOUD_ACCESS_TOKEN='<cloud-access-token>' \
 python3 tools/bambu_network_contract_tests/run_authorized_cloud_parity.py \
   --official-network /path/to/official/libbambu_networking.so \
   --official-source /path/to/official/libBambuSource.so \
@@ -263,7 +265,7 @@ python3 tools/bambu_network_contract_tests/run_authorized_cloud_parity.py \
   --skip-build
 ```
 
-`run_authorized_cloud_parity.py` runs `capture_official_parity.py` with `--include-cloud-service --allow-cloud-network --expect-cloud-service-success`, then feeds the generated `parity_report.json` into `run_release_readiness.py` with manual printer parity deferred. It validates required credential inputs up front, passes those same inputs into the clean-room artifact verifier, and keeps readiness incomplete unless the remaining non-cloud gates are also satisfied. Add `--dry-run` to validate paths and credential environment presence, then print the exact capture/readiness commands without contacting Bambu services. Add `--json` with `--dry-run` for a sanitized machine-readable report. The dry-run behavior is covered by `verify_authorized_cloud_parity_dry_run.py`.
+`run_authorized_cloud_parity.py` runs `capture_official_parity.py` with `--include-cloud-service --allow-cloud-network --expect-cloud-service-success`, then feeds the generated `parity_report.json` into `run_release_readiness.py` with manual printer parity deferred. It validates required credential inputs up front for live runs, passes those same inputs into the clean-room artifact verifier, and keeps readiness incomplete unless the remaining non-cloud gates are also satisfied. Add `--dry-run` to validate paths and report credential environment presence, then print the exact capture/readiness commands without contacting Bambu services. Add `--json` with `--dry-run` for a sanitized machine-readable report that native readiness can use as missing-input blocker evidence. The dry-run behavior is covered by `verify_authorized_cloud_parity_dry_run.py`.
 
 When a cloud parity report is passed to `run_release_readiness.py --official-parity-report`, an offline cloud-service comparison is accepted as contract evidence but does not turn the feature green. The `cloud_service_feature_parity` full-compatibility gap turns green only if both official and candidate cloud-service transcripts prove login, cloud-network, and service-call success and match on the normalized contract fields.
 
@@ -457,9 +459,9 @@ python3 tools/bambu_network_contract_tests/run_real_printer_parity.py \
   --confirm-start-prints
 ```
 
-The printer password/access code is read from the environment and is reported only as present or absent. `find_bambu_printers.py` sends an SSDP `M-SEARCH` to the Bambu discovery ports and reports any device identity packets it receives; if it does not find the printer, use the device id and IP from Orca/Bambu Studio or the printer UI. `run_real_printer_parity.py` runs `capture_official_parity.py` with source behavior, discovery, official-safe FT job ABI parity, printer workflow, and all requested print-job modes, then immediately feeds the generated `parity_report.json` into `run_release_readiness.py`. Add `--include-source-streaming` to derive a live RTSPS `libBambuSource` URL from the same printer IP, username, and password env, and to require successful source-streaming parity in the same final printer-backed report. Add `--include-source-control-tunnel` to derive a live `bambu:///local/<printer-ip>?port=6000...` control URL from the same inputs, capture official-vs-candidate `Bambu_SendMessage`/`Bambu_RecvMessage`/`Bambu_ReadSample` parity with a default eMMC list-style message, and feed that report into readiness through `--source-streaming-parity-report` so the non-FTPS source-control feature gap can turn green when the printer responds. It requires `--confirm-start-prints` when `local-print` or `sdcard-print` is included because those modes can start work on the printer. The optional print-job workflow can capture one or more modes with `--print-job-modes`; release readiness requires upload-only, local-print, and SD-card print behavior with the same printer credentials. To count as final real-printer evidence, the captured transcripts must identify the printer, match the expected print-job mode, include successful connect callback evidence, and include print status callbacks that reach finished status without any error status.
+The printer password/access code is read from the environment and is reported only as present or absent. `find_bambu_printers.py` sends an SSDP `M-SEARCH` to the Bambu discovery ports and reports any device identity packets it receives; if it does not find the printer, use the device id and IP from Orca/Bambu Studio or the printer UI. `run_real_printer_parity.py` runs `capture_official_parity.py` with source behavior, discovery, official-safe FT job ABI parity, printer workflow, and all requested print-job modes, then immediately feeds the generated `parity_report.json` into readiness. Add `--include-source-streaming` to derive a live RTSPS `libBambuSource` URL from the same printer IP, username, and password env, and to require successful source-streaming parity in the same final printer-backed report. Add `--include-source-control-tunnel` to derive a live `bambu:///local/<printer-ip>?port=6000...` control URL from the same inputs and capture official-vs-candidate `Bambu_SendMessage`/`Bambu_RecvMessage`/`Bambu_ReadSample` parity with a default eMMC list-style message. Legacy readiness receives that control-mode report through `--source-streaming-parity-report`; macOS native readiness receives it through `--source-control-parity-report` so the live port-6000 source-control gate cannot be confused with video streaming evidence. It requires `--confirm-start-prints` when `local-print` or `sdcard-print` is included because those modes can start work on the printer. The optional print-job workflow can capture one or more modes with `--print-job-modes`; release readiness requires upload-only, local-print, and SD-card print behavior with the same printer credentials. To count as final real-printer evidence, the captured transcripts must identify the printer, match the expected print-job mode, include successful connect callback evidence, and include print status callbacks that reach finished status without any error status.
 
-Add `--dry-run` to validate all local paths, password environment presence, print-mode inputs, Linux runtime report presence, optional source-streaming/control command generation, and print-start confirmation, then print the exact capture/readiness commands without launching the plugin probes or touching the printer. Add `--json` with `--dry-run` to emit a machine-readable report with sanitized printer/password presence, print-job mode details, source-streaming/control intent, and argv command arrays. Source-streaming URLs, source-control URLs, and source-control messages are redacted in dry-run output.
+Add `--dry-run` to validate all local paths, report printer identity/password environment presence, validate print-mode inputs, optional source-streaming/control command generation, and print-start confirmation, then print the exact capture/readiness commands without launching the plugin probes or touching the printer. Legacy release-readiness dry-runs also validate Linux runtime report presence; `--macos-native-readiness` intentionally does not require that bridge runtime report. Add `--json` with `--dry-run` to emit a machine-readable report with sanitized printer/password presence, print-job mode details, source-streaming/control intent, and argv command arrays. Source-streaming URLs, source-control URLs, and source-control messages are redacted in dry-run output.
 
 The dry-run behavior itself is covered by:
 
@@ -525,6 +527,130 @@ python3 tools/bambu_network_contract_tests/build_linux_libstdcxx_candidate.py \
 ```
 
 The helper writes `build/bambu_network_rust_plugin_linux_x86_64_libstdcxx/`, verifies both ELF export tables, requires `libstdc++` C++ ABI evidence for `libbambu_networking.so` and `libBambuSource.so`, compiles a Linux `bambu_network_contract_probe`, and runs Linux `dlopen`/`dlsym` checks against both shared objects. It honors `CXX`, `NM`, and `OBJDUMP` when the cross tools have non-default names.
+
+## Verify The macOS Native Plugin Path
+
+The macOS native path is opt-in while it is being qualified:
+
+```sh
+PJARCZAK_BAMBU_MACOS_NATIVE_PLUGIN=1 ./build_release_macos.sh -s
+```
+
+For copy-only packaging checks, the same flag stages only native dylibs and does not require the Linux bridge runtime:
+
+```sh
+PJARCZAK_BAMBU_COPY_RUNTIME_ONLY=1 \
+PJARCZAK_BAMBU_MACOS_NATIVE_PLUGIN=1 \
+PJARCZAK_BAMBU_COPY_APP_PATH=/path/to/OrcaSlicer.app \
+./build_release_macos.sh
+```
+
+Verify native Mach-O dylib evidence separately from bridge evidence. The verifier requires `libbambu_networking.dylib` or a versioned `libbambu_networking_<version>.dylib` plus exact `libBambuSource.dylib` source naming:
+
+```sh
+python3 tools/bambu_network_contract_tests/verify_macos_native_plugin.py \
+  --network-dylib build/bambu_network_rust_plugin_release/libbambu_networking.dylib \
+  --source-dylib build/bambu_network_rust_plugin_release/libBambuSource.dylib \
+  --out build/bambu_network_release_readiness/macos_native_plugin_report.json
+```
+
+Capture the local candidate smoke summary that native readiness consumes:
+
+```sh
+python3 tools/bambu_network_contract_tests/run_candidate_smoke.py \
+  --skip-build \
+  --plugin-build-dir build/bambu_network_rust_plugin_release \
+  > build/bambu_network_release_readiness/local_candidate_smoke.json
+```
+
+Aggregate native readiness with the current official macOS parity evidence. The official parity report must still point at existing official dylibs outside the repo; rerun `capture_official_parity.py` and pass the new `parity_report.json` if those `/tmp` inputs have been cleaned up or replaced.
+
+```sh
+python3 tools/bambu_network_contract_tests/run_macos_native_readiness.py \
+  --native-plugin-report build/bambu_network_release_readiness/macos_native_plugin_report.json \
+  --local-smoke-report build/bambu_network_release_readiness/local_candidate_smoke.json \
+  --official-parity-report build/bambu_network_release_readiness/official_parity_bambu_02.05.02.58_mac_reacquired/parity_report.json \
+  --native-package-macos-dir build/bambu_network_release_readiness/native_copy_scratch/OrcaSlicer.app/Contents/MacOS \
+  --native-package-root build/bambu_network_release_readiness/native_copy_scratch \
+  --native-gui-startup-log build/bambu_network_release_readiness/gui_native_smoke/native_startup_relevant_logs.txt \
+  --native-gui-startup-plugin-dir build/bambu_network_release_readiness/gui_native_smoke_datadir/plugins \
+  --out-dir build/bambu_network_release_readiness
+```
+
+Native readiness rejects the bridge dylib and Linux `.so` payloads as substitutes for native macOS evidence.
+The official parity gate requires the official macOS dylibs to be outside the repo, present at the paths recorded in the parity report, and still matching the recorded hashes, so stale parity reports cannot satisfy native readiness after their inputs disappear or change.
+The native package gate also verifies that the staged app `Contents/MacOS` directory contains the native Mach-O network/source dylibs matching the verified candidate hashes and no bridge or Linux runtime payloads, and that the package root does not contain generated bridge, Lima, or Linux runtime files.
+The bridge fallback gate checks the current bridge config source to confirm macOS bridge mode remains the default and native mode is only enabled by the explicit native-plugin flag.
+The loader routing gate checks the current Orca loader source to confirm native mode bypasses bridge preflight, uses macOS dylib loading/fallback paths, logs native mode, and loads `libBambuSource.dylib` separately when bridge mode is disabled.
+The GUI startup gate checks a bounded native-mode app launch log and isolated plugin directory to confirm the full app logs native mode, direct network/source dylib loads, `bridge_mode=false`, compatibility success, and network-agent creation without bridge, Linux, or Lima runtime files.
+Real-printer readiness requires raw parity evidence for printer workflow, upload-only/local-print/sdcard-print jobs, live source streaming, and a supplemental `--source-control-parity-report` for the live port-6000 source-control tunnel. Summary flags such as `real_printer_workflows_ok` or `source_streaming_parity_ok` are not accepted without successful official and candidate transcript artifacts.
+It reports `resources/handy_models/OrcaCube_v2.3mf` as the default available test 3MF for blocker accounting; pass `--real-printer-test-3mf` to point readiness at a different print file. `run_real_printer_parity.py --macos-native-readiness` forwards its `--print-job-file` as that native readiness input.
+Cloud/service readiness passes only with authorized `cloud_service` official-vs-candidate parity whose transcripts prove `allow_network=true`, `expect_success=true`, login/network/service success, and non-inert service results, or with `--cloud-service-scoped-out` plus passing unsupported safe-failure parity evidence. Completion audit requires the scoped-out report to carry concrete `safe_failure_checks`; a summary flag alone is not enough.
+
+For the final macOS native external gates, use the real-printer or authorized-cloud wrappers with `--macos-native-readiness` to capture the live parity report and feed it into the native aggregator. The wrapper dry-runs validate command generation and local inputs, but they do not replace the live parity reports. When live inputs are missing, save the dry-run JSON and pass it through `--real-printer-dry-run-report` or `--authorized-cloud-dry-run-report` so the blocked readiness report names the missing inputs. When real-printer and cloud/service evidence are captured in separate runs, rerun the native aggregator with the produced reports through `--real-printer-parity-report` and `--cloud-service-parity-report`:
+
+`run_real_printer_parity.py --macos-native-readiness` rejects incomplete native scope before capture: it requires upload-only, local-print, and sdcard-print modes, `--include-source-streaming`, and `--include-source-control-tunnel`. `run_authorized_cloud_parity.py --macos-native-readiness` requires login info, ticket, and access-token env inputs.
+In native-readiness mode, these wrappers do not require the legacy Linux bridge runtime report; that report is still required for the legacy release-readiness path.
+When the default blocker artifacts already exist, the wrappers pass them through to native readiness: the real-printer wrapper includes `authorized_cloud_dry_run_missing_inputs.json`, and the authorized-cloud wrapper includes `real_printer_dry_run_missing_inputs.json` plus `bambu_printer_discovery.json`. This keeps single-gate native runs actionable while the other external gate is still unresolved.
+
+```sh
+BAMBU_NETWORK_PRINTER_PASSWORD='<printer-access-code>' \
+python3 tools/bambu_network_contract_tests/run_real_printer_parity.py \
+  --skip-build \
+  --official-network /tmp/bambu-official-plugin-02.05.02.58-reacquire/extracted/libbambu_networking.dylib \
+  --official-source /tmp/bambu-official-plugin-02.05.02.58-reacquire/extracted/libBambuSource.dylib \
+  --printer-dev-id '<printer-dev-id>' \
+  --printer-dev-ip '<printer-ip>' \
+  --printer-username bblp \
+  --print-job-file '<path-to-test.3mf>' \
+  --print-job-modes upload-only,local-print,sdcard-print \
+  --print-job-remote-name test.3mf \
+  --include-source-streaming \
+  --include-source-control-tunnel \
+  --macos-native-readiness \
+  --confirm-start-prints
+
+python3 tools/bambu_network_contract_tests/run_macos_native_readiness.py \
+  --native-plugin-report build/bambu_network_release_readiness/macos_native_plugin_report.json \
+  --local-smoke-report build/bambu_network_release_readiness/local_candidate_smoke.json \
+  --official-parity-report build/bambu_network_release_readiness/official_parity_real_printer_current/parity_report.json \
+  --real-printer-parity-report build/bambu_network_release_readiness/official_parity_real_printer_current/parity_report.json \
+  --real-printer-dry-run-report build/bambu_network_release_readiness/real_printer_dry_run_missing_inputs.json \
+  --printer-discovery-report build/bambu_network_release_readiness/bambu_printer_discovery.json \
+  --source-control-parity-report build/bambu_network_release_readiness/official_parity_real_printer_current_source_control_tunnel/parity_report.json \
+  --real-printer-test-3mf resources/handy_models/OrcaCube_v2.3mf \
+  --native-package-macos-dir build/arm64/OrcaSlicer/OrcaSlicer.app/Contents/MacOS \
+  --native-package-root build/arm64/OrcaSlicer \
+  --native-gui-startup-log build/bambu_network_release_readiness/gui_native_smoke/native_startup_relevant_logs.txt \
+  --native-gui-startup-plugin-dir build/bambu_network_release_readiness/gui_native_smoke_datadir/plugins \
+  --out-dir build/bambu_network_release_readiness
+```
+
+```sh
+BAMBU_CLOUD_LOGIN_INFO_JSON='<login-info-json>' \
+BAMBU_CLOUD_TICKET='<cloud-ticket>' \
+BAMBU_CLOUD_ACCESS_TOKEN='<cloud-access-token>' \
+python3 tools/bambu_network_contract_tests/run_authorized_cloud_parity.py \
+  --skip-build \
+  --official-network /tmp/bambu-official-plugin-02.05.02.58-reacquire/extracted/libbambu_networking.dylib \
+  --official-source /tmp/bambu-official-plugin-02.05.02.58-reacquire/extracted/libBambuSource.dylib \
+  --cloud-user-info-env BAMBU_CLOUD_LOGIN_INFO_JSON \
+  --cloud-ticket-env BAMBU_CLOUD_TICKET \
+  --cloud-access-token-env BAMBU_CLOUD_ACCESS_TOKEN \
+  --macos-native-readiness
+
+python3 tools/bambu_network_contract_tests/run_macos_native_readiness.py \
+  --native-plugin-report build/bambu_network_release_readiness/macos_native_plugin_report.json \
+  --local-smoke-report build/bambu_network_release_readiness/local_candidate_smoke.json \
+  --official-parity-report build/bambu_network_release_readiness/official_parity_authorized_cloud_current/parity_report.json \
+  --cloud-service-parity-report build/bambu_network_release_readiness/official_parity_authorized_cloud_current/parity_report.json \
+  --authorized-cloud-dry-run-report build/bambu_network_release_readiness/authorized_cloud_dry_run_missing_inputs.json \
+  --native-package-macos-dir build/arm64/OrcaSlicer/OrcaSlicer.app/Contents/MacOS \
+  --native-package-root build/arm64/OrcaSlicer \
+  --native-gui-startup-log build/bambu_network_release_readiness/gui_native_smoke/native_startup_relevant_logs.txt \
+  --native-gui-startup-plugin-dir build/bambu_network_release_readiness/gui_native_smoke_datadir/plugins \
+  --out-dir build/bambu_network_release_readiness
+```
 
 Assemble the macOS bridge runtime input directory from the cross-built host and clean-room plugin payload:
 

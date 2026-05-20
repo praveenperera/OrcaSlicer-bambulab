@@ -14,10 +14,21 @@ DEFAULT_PLUGIN_BUILD = ROOT / "build/bambu_network_rust_plugin_release"
 DEFAULT_LINUX_RUNTIME_REPORT = ROOT / "build/bambu_network_release_readiness/linux_bridge_runtime_verify_report.json"
 DEFAULT_PARITY_DIR = ROOT / "build/bambu_network_release_readiness/official_parity_real_printer_current"
 DEFAULT_READINESS_DIR = ROOT / "build/bambu_network_release_readiness"
+DEFAULT_NATIVE_PLUGIN_REPORT = DEFAULT_READINESS_DIR / "macos_native_plugin_report.json"
+DEFAULT_LOCAL_SMOKE_REPORT = DEFAULT_READINESS_DIR / "local_candidate_smoke.json"
+DEFAULT_NATIVE_PACKAGE_MACOS_DIR = ROOT / "build/arm64/OrcaSlicer/OrcaSlicer.app/Contents/MacOS"
+DEFAULT_NATIVE_PACKAGE_ROOT = ROOT / "build/arm64/OrcaSlicer"
+DEFAULT_NATIVE_GUI_STARTUP_LOG = DEFAULT_READINESS_DIR / "gui_native_smoke/native_startup_relevant_logs.txt"
+DEFAULT_NATIVE_GUI_STARTUP_PLUGIN_DIR = DEFAULT_READINESS_DIR / "gui_native_smoke_datadir/plugins"
+DEFAULT_PRINTER_DISCOVERY_REPORT = DEFAULT_READINESS_DIR / "bambu_printer_discovery.json"
+DEFAULT_AUTHORIZED_CLOUD_DRY_RUN_REPORT = DEFAULT_READINESS_DIR / "authorized_cloud_dry_run_missing_inputs.json"
 REQUIRED_PRINT_JOB_MODES = ("upload-only", "local-print", "sdcard-print")
 REDACTED_SOURCE_STREAM_URL = "<redacted-source-stream-url>"
 REDACTED_SOURCE_CONTROL_URL = "<redacted-source-control-url>"
 REDACTED_SOURCE_CONTROL_MESSAGE = "<redacted-source-control-message>"
+MISSING_PRINTER_DEV_ID = "<missing-printer-dev-id>"
+MISSING_PRINTER_DEV_IP = "<missing-printer-ip>"
+MISSING_PRINTER_PASSWORD = "<missing-printer-password>"
 
 
 def sanitized_command(cmd: list[str], source_stream_url: str = "", source_control_url: str = "", source_control_message: str = "") -> list[str]:
@@ -50,15 +61,23 @@ def print_command(label: str, cmd: list[str], source_stream_url: str = "", sourc
 def source_stream_url(args: argparse.Namespace, password: str) -> str:
     return (
         f"bambu:///rtsps___{args.printer_username}:{password}"
-        f"@{args.printer_dev_ip}/streaming/live/1?proto=rtsps"
+        f"@{printer_dev_ip_for_command(args)}/streaming/live/1?proto=rtsps"
     )
 
 
 def source_control_url(args: argparse.Namespace, password: str) -> str:
     return (
-        f"bambu:///local/{args.printer_dev_ip}"
+        f"bambu:///local/{printer_dev_ip_for_command(args)}"
         f"?port=6000&user={args.printer_username}&passwd={password}"
     )
+
+
+def printer_dev_id_for_command(args: argparse.Namespace) -> str:
+    return args.printer_dev_id or MISSING_PRINTER_DEV_ID
+
+
+def printer_dev_ip_for_command(args: argparse.Namespace) -> str:
+    return args.printer_dev_ip or MISSING_PRINTER_DEV_IP
 
 
 def dry_run_report(
@@ -66,6 +85,7 @@ def dry_run_report(
     capture_cmd: list[str],
     source_control_capture_cmd: list[str] | None,
     readiness_cmd: list[str],
+    native_readiness_cmd: list[str] | None,
     source_url: str = "",
     control_url: str = "",
 ) -> dict[str, object]:
@@ -100,6 +120,9 @@ def dry_run_report(
             if source_control_capture_cmd
             else None,
             "run_release_readiness": sanitized_command(readiness_cmd, source_url, control_url, args.source_control_message),
+            "run_macos_native_readiness": sanitized_command(native_readiness_cmd, source_url, control_url, args.source_control_message)
+            if native_readiness_cmd
+            else None,
         },
     }
 
@@ -130,9 +153,18 @@ def main() -> int:
     parser.add_argument("--parity-out-dir", type=pathlib.Path, default=DEFAULT_PARITY_DIR)
     parser.add_argument("--readiness-out-dir", type=pathlib.Path, default=DEFAULT_READINESS_DIR)
     parser.add_argument("--linux-runtime-report", type=pathlib.Path, default=DEFAULT_LINUX_RUNTIME_REPORT)
+    parser.add_argument("--macos-native-readiness", action="store_true", help="after capture, aggregate the macOS native readiness report instead of the legacy release readiness report")
+    parser.add_argument("--native-plugin-report", type=pathlib.Path, default=DEFAULT_NATIVE_PLUGIN_REPORT)
+    parser.add_argument("--local-smoke-report", type=pathlib.Path, default=DEFAULT_LOCAL_SMOKE_REPORT)
+    parser.add_argument("--native-package-macos-dir", type=pathlib.Path, default=DEFAULT_NATIVE_PACKAGE_MACOS_DIR)
+    parser.add_argument("--native-package-root", type=pathlib.Path, default=DEFAULT_NATIVE_PACKAGE_ROOT)
+    parser.add_argument("--native-gui-startup-log", type=pathlib.Path, default=DEFAULT_NATIVE_GUI_STARTUP_LOG)
+    parser.add_argument("--native-gui-startup-plugin-dir", type=pathlib.Path, default=DEFAULT_NATIVE_GUI_STARTUP_PLUGIN_DIR)
+    parser.add_argument("--printer-discovery-report", type=pathlib.Path, default=DEFAULT_PRINTER_DISCOVERY_REPORT)
+    parser.add_argument("--authorized-cloud-dry-run-report", type=pathlib.Path, default=DEFAULT_AUTHORIZED_CLOUD_DRY_RUN_REPORT)
     parser.add_argument("--skip-build", action="store_true")
-    parser.add_argument("--printer-dev-id", required=True)
-    parser.add_argument("--printer-dev-ip", required=True)
+    parser.add_argument("--printer-dev-id", default="")
+    parser.add_argument("--printer-dev-ip", default="")
     parser.add_argument("--printer-username", default="bblp")
     parser.add_argument("--printer-password-env", default="BAMBU_NETWORK_PRINTER_PASSWORD")
     parser.add_argument("--printer-country-code", default="US")
@@ -184,14 +216,30 @@ def main() -> int:
         parser.error(str(error))
 
     printer_password = os.environ.get(args.printer_password_env)
-    if not printer_password:
+    if not printer_password and not args.dry_run:
         parser.error(f"{args.printer_password_env} must be set in the environment")
-    if args.linux_runtime_report and not args.linux_runtime_report.is_file():
+    printer_password_for_command = printer_password or MISSING_PRINTER_PASSWORD
+    if not args.printer_dev_id and not args.dry_run:
+        parser.error("--printer-dev-id is required")
+    if not args.printer_dev_ip and not args.dry_run:
+        parser.error("--printer-dev-ip is required")
+    if not args.macos_native_readiness and args.linux_runtime_report and not args.linux_runtime_report.is_file():
         parser.error(f"Linux runtime report does not exist: {args.linux_runtime_report}")
     if any(mode != "upload-only" for mode in args.print_job_modes) and not args.confirm_start_prints:
         parser.error("--confirm-start-prints is required when local-print or sdcard-print is included")
-    live_source_url = source_stream_url(args, printer_password) if args.include_source_streaming else ""
-    live_control_url = source_control_url(args, printer_password) if args.include_source_control_tunnel else ""
+    if args.macos_native_readiness:
+        missing_native_modes = [mode for mode in REQUIRED_PRINT_JOB_MODES if mode not in args.print_job_modes]
+        if missing_native_modes:
+            parser.error(
+                "--macos-native-readiness requires all print-job modes: "
+                + ",".join(REQUIRED_PRINT_JOB_MODES)
+            )
+        if not args.include_source_streaming:
+            parser.error("--macos-native-readiness requires --include-source-streaming")
+        if not args.include_source_control_tunnel:
+            parser.error("--macos-native-readiness requires --include-source-control-tunnel")
+    live_source_url = source_stream_url(args, printer_password_for_command) if args.include_source_streaming else ""
+    live_control_url = source_control_url(args, printer_password_for_command) if args.include_source_control_tunnel else ""
     source_control_parity_out_dir = args.source_control_parity_out_dir or args.parity_out_dir.parent / f"{args.parity_out_dir.name}_source_control_tunnel"
 
     capture_cmd = [
@@ -211,9 +259,9 @@ def main() -> int:
         "--include-discovery",
         "--include-ft-job-only",
         "--printer-dev-id",
-        args.printer_dev_id,
+        printer_dev_id_for_command(args),
         "--printer-dev-ip",
-        args.printer_dev_ip,
+        printer_dev_ip_for_command(args),
         "--printer-username",
         args.printer_username,
         "--printer-password-env",
@@ -307,9 +355,9 @@ def main() -> int:
         "--official-parity-report",
         str(args.parity_out_dir / "parity_report.json"),
         "--printer-dev-id",
-        args.printer_dev_id,
+        printer_dev_id_for_command(args),
         "--printer-dev-ip",
-        args.printer_dev_ip,
+        printer_dev_ip_for_command(args),
         "--printer-username",
         args.printer_username,
         "--printer-password-env",
@@ -339,15 +387,64 @@ def main() -> int:
         ])
     readiness_cmd.append("--expect-printer-success")
 
+    native_readiness_cmd = [
+        sys.executable,
+        str(CONTRACT_DIR / "run_macos_native_readiness.py"),
+        "--native-plugin-report",
+        str(args.native_plugin_report),
+        "--local-smoke-report",
+        str(args.local_smoke_report),
+        "--official-parity-report",
+        str(args.parity_out_dir / "parity_report.json"),
+        "--real-printer-parity-report",
+        str(args.parity_out_dir / "parity_report.json"),
+        "--native-package-macos-dir",
+        str(args.native_package_macos_dir),
+        "--native-package-root",
+        str(args.native_package_root),
+        "--native-gui-startup-log",
+        str(args.native_gui_startup_log),
+        "--native-gui-startup-plugin-dir",
+        str(args.native_gui_startup_plugin_dir),
+        "--real-printer-test-3mf",
+        str(print_job_file),
+        "--out-dir",
+        str(args.readiness_out_dir),
+    ]
+    if args.printer_discovery_report:
+        native_readiness_cmd.extend(["--printer-discovery-report", str(args.printer_discovery_report)])
+    if args.authorized_cloud_dry_run_report and args.authorized_cloud_dry_run_report.is_file():
+        native_readiness_cmd.extend(["--authorized-cloud-dry-run-report", str(args.authorized_cloud_dry_run_report)])
+    if args.include_source_control_tunnel:
+        native_readiness_cmd.extend([
+            "--source-control-parity-report",
+            str(source_control_parity_out_dir / "parity_report.json"),
+        ])
+
     if args.dry_run:
         if args.json:
-            print(json.dumps(dry_run_report(args, capture_cmd, source_control_capture_cmd, readiness_cmd, live_source_url, live_control_url), indent=2, sort_keys=True))
+            print(json.dumps(
+                dry_run_report(
+                    args,
+                    capture_cmd,
+                    source_control_capture_cmd,
+                    readiness_cmd,
+                    native_readiness_cmd if args.macos_native_readiness else None,
+                    live_source_url,
+                    live_control_url,
+                ),
+                indent=2,
+                sort_keys=True,
+            ))
         else:
             print("real-printer parity dry run ok")
             print_command("capture_official_parity", capture_cmd, live_source_url, live_control_url, args.source_control_message)
             if source_control_capture_cmd:
                 print_command("capture_source_control_tunnel_parity", source_control_capture_cmd, live_source_url, live_control_url, args.source_control_message)
-            print_command("run_release_readiness", readiness_cmd, live_source_url, live_control_url, args.source_control_message)
+            if args.macos_native_readiness:
+                print_command("run_macos_native_readiness", native_readiness_cmd, live_source_url, live_control_url, args.source_control_message)
+            else:
+                print_command("run_release_readiness", readiness_cmd, live_source_url, live_control_url, args.source_control_message)
         return 0
 
     capture = run(capture_cmd, live_source_url, live_control_url, args.source_control_message)
@@ -359,6 +456,8 @@ def main() -> int:
         if source_control_capture.returncode != 0:
             return source_control_capture.returncode
 
+    if args.macos_native_readiness:
+        return run(native_readiness_cmd, live_source_url, live_control_url, args.source_control_message).returncode
     return run(readiness_cmd, live_source_url, live_control_url, args.source_control_message).returncode
 
 

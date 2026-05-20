@@ -165,6 +165,7 @@ int BBLNetworkPlugin::initialize(bool using_backup, const std::string& version)
         plugin_folder = plugin_folder / "backup";
     }
 
+    const bool macos_native_plugin = Slic3r::PJarczakLinuxBridge::macos_native_plugin_enabled();
     const bool pj_bridge = Slic3r::PJarczakLinuxBridge::enabled();
 
     if (pj_bridge) {
@@ -186,6 +187,9 @@ int BBLNetworkPlugin::initialize(bool using_backup, const std::string& version)
             );
             return -1;
         }
+    } else if (macos_native_plugin) {
+        BOOST_LOG_TRIVIAL(info) << "BBLNetworkPlugin::initialize: macOS native plugin mode enabled, plugin_folder="
+                                << plugin_folder.string();
     }
 
     if (version.empty()) {
@@ -244,10 +248,10 @@ int BBLNetworkPlugin::initialize(bool using_backup, const std::string& version)
 
             if (boost::filesystem::exists(fallback_library)) {
                 BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": versioned plugin missing, trying fallback " << fallback_library;
+                library = fallback_library;
                 dlerror();
                 m_networking_module = dlopen(fallback_library.c_str(), RTLD_LAZY);
                 if (m_networking_module) {
-                    library = fallback_library;
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": loaded fallback network library " << fallback_library;
                 }
             }
@@ -255,7 +259,8 @@ int BBLNetworkPlugin::initialize(bool using_backup, const std::string& version)
 
         if (!m_networking_module) {
             char* dll_error = dlerror();
-            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": dlopen failed: " << (dll_error ? dll_error : "unknown error");
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": dlopen failed for " << library << ": "
+                                     << (dll_error ? dll_error : "unknown error");
             set_load_error(
                 "Failed to load network library",
                 dll_error ? std::string(dll_error) : "Unknown dlopen error",
@@ -290,6 +295,7 @@ int BBLNetworkPlugin::initialize(bool using_backup, const std::string& version)
     BOOST_LOG_TRIVIAL(info) << "BBLNetworkPlugin::initialize: legacy_mode="
         << (m_use_legacy_network ? "true" : "false")
         << ", bridge_mode=" << (pj_bridge ? "true" : "false")
+        << ", macos_native_plugin_mode=" << (macos_native_plugin ? "true" : "false")
         << ", library=" << library
         << ", version=" << (loaded_version.empty() ? "unknown" : loaded_version)
         << ", send_message=" << (m_send_message ? "loaded" : "null")
@@ -441,6 +447,14 @@ void* BBLNetworkPlugin::get_source_module()
     library = plugin_folder.string() + "/" + std::string("lib") + std::string(BAMBU_SOURCE_LIBRARY) + ".so";
 #endif
     m_source_module = dlopen(library.c_str(), RTLD_LAZY);
+    if (m_source_module && Slic3r::PJarczakLinuxBridge::macos_native_plugin_enabled()) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": loaded native source library " << library;
+    }
+    if (!m_source_module && Slic3r::PJarczakLinuxBridge::macos_native_plugin_enabled()) {
+        char* dll_error = dlerror();
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": native source dlopen failed for " << library << ": "
+                                 << (dll_error ? dll_error : "unknown error");
+    }
 #endif
 
     return m_source_module;

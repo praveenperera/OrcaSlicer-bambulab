@@ -273,6 +273,9 @@ const nlohmann::json* find_manifest_entry(const nlohmann::json& root, const std:
 
 bool enabled()
 {
+    if (macos_native_plugin_enabled())
+        return false;
+
     bool forced = false;
     if (env_flag("PJARCZAK_LINUX_BRIDGE_ENABLED", forced))
         return forced;
@@ -286,12 +289,22 @@ bool enabled()
 #endif
 }
 
+bool macos_native_plugin_enabled()
+{
+#if defined(__WXMAC__) || defined(__APPLE__)
+    bool forced = false;
+    return env_flag("PJARCZAK_BAMBU_MACOS_NATIVE_PLUGIN", forced) && forced;
+#else
+    return false;
+#endif
+}
+
 bool use_bridge_network_module()
 {
 #if defined(_MSC_VER) || defined(_WIN32)
     return true;
 #elif defined(__WXMAC__) || defined(__APPLE__)
-    return true;
+    return !macos_native_plugin_enabled();
 #else
     return false;
 #endif

@@ -8,6 +8,7 @@
 namespace Slic3r::PJarczakLinuxBridge {
 
 bool enabled();
+bool macos_native_plugin_enabled();
 bool use_bridge_network_module();
 bool source_module_is_network_module();
 bool should_force_linux_plugin_payload(const std::string& plugin_name);
